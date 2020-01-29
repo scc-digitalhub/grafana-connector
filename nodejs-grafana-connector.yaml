@@ -1,0 +1,37 @@
+metadata:
+  name: nodejs-grafana-connector
+spec:
+  description: "Provision Users,Organizations, Roles for Grafana"
+  handler: "main:handler"
+  runtime: nodejs
+  env:
+    - name: AACJWKURL
+      value: "http://AAC_URL:8080/aac/jwk"
+    - name: AACRESOURCEID
+      value: AAC_RESOURCE_ID_VALUE
+    - name: GRAFANAAUTH
+      value: "Basic YWRtaW46YWxiYW5h"
+    - name: GRAFANAENDPOINT
+      value: "http://GRAFANA_URL:3000"
+    - name: GRAFANA_USER_PASSW_DEFAULT
+      value: password
+  resources: {}
+  image: "nuclio/processor-nodejs-grafana:latest"
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPU: 75
+  build:
+    image: ""
+    noCache: false
+    offline: false
+    dependencies: []
+    runtimeAttributes:
+      repositories: []
+    commands:
+      - 'npm install --global moment'
+      - 'npm install --global jsonwebtoken'
+      - 'npm install --global axios'
+      - 'npm install --global jwks-rsa'
+    codeEntryType: sourceCode
+  platform: {}
+  readinessTimeoutSeconds: 60
