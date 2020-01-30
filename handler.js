@@ -144,7 +144,7 @@ exports.handler = async(context, event) => {
     extractClaims(context, event.headers, function(claims) {
         try{
             // extract roles
-            context.logger.infoWith('Roles from AAC for Grafana: '  + claims.grafana_roles);
+            context.logger.infoWith('Roles from AAC for Grafana: ', claims.grafana_roles);
             var name  = claims.username;
             var username = claims.email;  
             var roles = claims.grafana_roles;       
