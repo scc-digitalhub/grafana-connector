@@ -26,6 +26,6 @@ function claimMapping(claims) {
             
             return prev;
         }, {});
-    claims.grafana_roles = roles;
+    claims['grafana/roles'] = roles;
     return claims;
 }
