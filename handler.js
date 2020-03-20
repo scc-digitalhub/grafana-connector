@@ -6,6 +6,7 @@ var RESOURCE_ID                 = process.env.AACRESOURCEID;
 var GRAFANA_ENDPOINT            = process.env.GRAFANAENDPOINT;
 var GRAFANA_AUTH                = process.env.GRAFANAAUTH;
 var GRAFANA_USER_PASSW_DEFAULT  = process.env.GRAFANA_USER_PASSW_DEFAULT;
+var CUSTOMCLAIM_ROLES = 'grafana/roles'
 
 /**
 * Check JWT token is present, is valid with respect to the preconfigured JWKS, and is not expired.
@@ -144,10 +145,10 @@ exports.handler = async(context, event) => {
     extractClaims(context, event.headers, function(claims) {
         try{
             // extract roles
-            context.logger.infoWith('Roles from AAC for Grafana: ', claims.grafana_roles);
+            context.logger.infoWith('Roles from AAC for Grafana: ', claims[CUSTOMCLAIM_ROLES]);
             var name  = claims.username;
             var username = claims.email;  
-            var roles = claims.grafana_roles;       
+            var roles = claims[CUSTOMCLAIM_ROLES];       
             if(roles != undefined){
                 // create the global user, the organizations and assing the proper roles to the user
                 provisionEntities(context, name, username, roles);
