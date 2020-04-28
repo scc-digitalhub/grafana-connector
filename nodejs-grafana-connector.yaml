@@ -32,6 +32,7 @@ spec:
       - 'npm install --global jsonwebtoken'
       - 'npm install --global axios'
       - 'npm install --global jwks-rsa'
+      - 'npm install --global randomstring'
     codeEntryType: sourceCode
   platform: {}
   readinessTimeoutSeconds: 60
