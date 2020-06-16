@@ -6,6 +6,7 @@ var JWKS_URI                    = process.env.AACJWKURL;
 var RESOURCE_ID                 = process.env.AACRESOURCEID;
 var GRAFANA_ENDPOINT            = process.env.GRAFANAENDPOINT;
 var GRAFANA_AUTH                = process.env.GRAFANAAUTH;
+var GRAFANA_USER_PASSW_DEFAULT  = process.env.GRAFANA_USER_PASSW_DEFAULT;
 var CUSTOMCLAIM_ROLES = 'grafana/roles'
 
 /**
@@ -90,24 +91,28 @@ var handleOrganizations = async (context, org, role, username, userId) => {
  */
 var provisionEntities = async (context, name, useremail, roles) => {
     var passw = randomStr.generate(8);
-    var objToBeSent = {name : name, email : useremail, password : passw};
-    var userId = "";
-    context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail + ". objToBeSent " , objToBeSent);
-    axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})
+    var objToBeSent = {name : name, email : useremail, password : GRAFANA_USER_PASSW_DEFAULT};
+    var userId = 0;
+    context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail);
+    userId = await axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})
         .then(function(res){
             context.logger.info('Global user ' + name + ' ' + useremail + ' already exists in Grafana.', res);
             userId = res.data.id;
+            // remove the user from old orgs
+            removeUserFromOrg(context, userId, roles);
             // provisioning organizations
-           for (var org in roles) {
+            for (var org in roles) {
                 context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
                 roleName = roles[org];
                 handleOrganizations(context, org, roleName, useremail, userId);
-            } 
+            }         
         }).catch(function(err){
             axios.post(GRAFANA_ENDPOINT + '/api/admin/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
                 .then(function(res) {
                     context.logger.info('User ' + name + ' successfully created in Grafana.');
                     userId = res.data.id;
+                    // remove the user from old orgs
+                    removeUserFromOrg(context, userId, roles);
                     // provisioning organizations
                     for (var org in roles) {
                         context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
@@ -121,6 +126,37 @@ var provisionEntities = async (context, name, useremail, roles) => {
                 });
         });
 };
+/**
+ * Get the list of organizations in Grafana
+ */
+var getListOrgsOfUser = async (context, userId) => {
+    return axios.get(GRAFANA_ENDPOINT + '/api/users/' + userId + '/orgs', {headers: {'Authorization': GRAFANA_AUTH}})
+        .then(function(res){
+            context.logger.info("List of user's organizations: ")
+            console.log(res.data)
+            return res.data
+        })
+}
+
+/**
+ * Remove the user from the non-belonging organizations 
+ */
+var removeUserFromOrg = async (context, userId, roles) => {
+    orgs = await getListOrgsOfUser(context, userId);
+    console.log(Object.keys(roles))
+    excludedOrgs = orgs.filter(value => !Object.keys(roles).includes(value.name))
+    context.logger.info("List of organizations to delete the user from: ")
+    console.log(excludedOrgs)
+    for(var currOrg in excludedOrgs){
+        axios.delete(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId, {headers: {'Authorization': GRAFANA_AUTH}})
+        .then(function(res){
+            context.logger.info('User ' + userId + ' removed successfully from org: ' + currOrg);
+            return res.data
+        }).catch(function(err){
+                context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while removing user from Org.' + currOrg.name , err: err}, {}, 'application/json', 500));
+        })
+    }   
+}
 
 /**
  *  Assign the user to the proper role (Admin, Editor, Viewer)
