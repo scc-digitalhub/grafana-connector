@@ -17,9 +17,9 @@ function claimMapping(claims) {
             }
         })
         .reduce(function(prev, curr) {
-            if(curr.role === 'ROLE_PROVIDER')
+            if(curr.role === 'ROLE_ADMIN')
                 prev[curr.org] = 'Admin';
-            else if(curr.role === 'Editor' && prev[curr.org]  !== 'Admin')
+            else if(curr.role === 'ROLE_EDITOR' && prev[curr.org]  !== 'Admin')
                 prev[curr.org] = 'Editor';
             else if(!prev[curr.org])
                 prev[curr.org] = 'Viewer';
