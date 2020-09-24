@@ -6,7 +6,6 @@ var JWKS_URI                    = process.env.AACJWKURL;
 var RESOURCE_ID                 = process.env.AACRESOURCEID;
 var GRAFANA_ENDPOINT            = process.env.GRAFANAENDPOINT;
 var GRAFANA_AUTH                = process.env.GRAFANAAUTH;
-var GRAFANA_USER_PASSW_DEFAULT  = process.env.GRAFANA_USER_PASSW_DEFAULT;
 var CUSTOMCLAIM_ROLES = 'grafana/roles'
 
 /**
@@ -91,7 +90,7 @@ var handleOrganizations = async (context, org, role, username, userId) => {
  */
 var provisionEntities = async (context, name, useremail, roles) => {
     var passw = randomStr.generate(8);
-    var objToBeSent = {name : name, email : useremail, password : GRAFANA_USER_PASSW_DEFAULT};
+    var objToBeSent = {name : name, email : useremail, password : passw};
     var userId = 0;
     context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail);
     userId = await axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})

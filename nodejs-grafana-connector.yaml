@@ -13,8 +13,6 @@ spec:
       value: "Basic YWRtaW46YWxiYW5h"
     - name: GRAFANAENDPOINT
       value: "http://GRAFANA_URL:3000"
-    - name: GRAFANA_USER_PASSW_DEFAULT
-      value: password
   resources: {}
   image: "nuclio/processor-nodejs-grafana:latest"
   minReplicas: 1
