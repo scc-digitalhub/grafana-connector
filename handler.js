@@ -1,3 +1,4 @@
+
 var jwt = require('jsonwebtoken');
 var axios = require('axios');
 var randomStr = require('randomstring');
@@ -54,7 +55,7 @@ context.callback(new context.Response({message: 'Missing token'}, {}, 'applicati
  * Check if the organization exists in order to provision it and assign the proper rights to the user
  * if not, create the organization
  */
-var handleOrganizations = async (context, org, role, username, userId) => {
+var handleOrganizations = async (context, org, role, username, userId, defaultOrg) => {
     var org_calls        = [];
     var orgId            = "";
     
@@ -66,6 +67,9 @@ var handleOrganizations = async (context, org, role, username, userId) => {
             
             // assign the proper role to the user inside the organization
             handleUserRoles(context, orgId, username, userId, role);
+            // assign the default org of the user
+            if(defaultOrg)
+                updateUser(context, userId, orgId);
         }).catch(function(err) {
             return axios.post(GRAFANA_ENDPOINT + '/api/orgs', {name: org}, {headers: {'Authorization': GRAFANA_AUTH}})
                         .then(function(res) {
@@ -75,6 +79,9 @@ var handleOrganizations = async (context, org, role, username, userId) => {
                             
                             // assign the proper role to the user inside the organization
                             handleUserRoles(context, orgId, username, userId, role);
+                            // assign the default org of the user
+                            if(defaultOrg)
+                                updateUser(context, userId, orgId);
                             org_calls.push('Organization does not exist in Grafana.Creating organization: ' + org);
                             return 'Organization does not exist in Grafana.Creating organization: ' + org;
                         }).catch(function(err) {
@@ -92,6 +99,7 @@ var provisionEntities = async (context, name, useremail, roles) => {
     var passw = randomStr.generate(8);
     var objToBeSent = {name : name, email : useremail, password : passw};
     var userId = 0;
+    var iter = 0;
     context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail);
     userId = await axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})
         .then(function(res){
@@ -103,7 +111,8 @@ var provisionEntities = async (context, name, useremail, roles) => {
             for (var org in roles) {
                 context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
                 roleName = roles[org];
-                handleOrganizations(context, org, roleName, useremail, userId);
+                handleOrganizations(context, org, roleName, useremail, userId, iter == Object.keys(roles).length-1);
+                iter++;
             }         
         }).catch(function(err){
             axios.post(GRAFANA_ENDPOINT + '/api/admin/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
@@ -116,7 +125,8 @@ var provisionEntities = async (context, name, useremail, roles) => {
                     for (var org in roles) {
                         context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
                         roleName = roles[org];
-                        handleOrganizations(context, org, roleName, useremail, userId);
+                        handleOrganizations(context, org, roleName, useremail, userId, iter == Object.keys(roles).length-1);
+                        iter++;
                     } 
                     return res.data.id;
                 }).catch(function(err) {
@@ -125,6 +135,22 @@ var provisionEntities = async (context, name, useremail, roles) => {
                 });
         });
 };
+
+/**
+ * Update user to switch its context to the given organization
+ */
+var updateUser = async (context, userId, orgId) => {
+    context.logger.info("Updating the default org of user " + userId + ". OrgId: " + orgId + " " + GRAFANA_ENDPOINT + '/api/users/' + userId + '/using/' + orgId);
+    axios.post(GRAFANA_ENDPOINT + '/api/users/' + userId + '/using/' + orgId, {}, {headers: {'Authorization': GRAFANA_AUTH}})
+        .then(function(res){
+            context.logger.info('User ' + userId + ' context switched successfully to orgId: ' + orgId);
+            return res.data
+        }).catch(function(err){
+            context.logger.info('Error while updating user: ' + userId + " " + err);
+                context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while updating user.', err: err}, {}, 'application/json', 500));
+        })
+}
+
 /**
  * Get the list of organizations in Grafana
  */
@@ -165,13 +191,13 @@ var handleUserRoles = async (context, orgId, username, userId, roleName) => {
     context.logger.infoWith("Handling Roles of user:" + username + " in organizationId. " + orgId + ". objToBeSent " , objToBeSent);
     axios.post(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
         .then(function(res) {
-            context.logger.info('Role ' + roleName + ' successfully assigned to user: ' + username);
+            context.logger.info('Role ' + roleName + ' in org: ' + orgId + ' successfully assigned to user: ' + username);
         }).catch(function(err) {
                 context.logger.info('User is already member of this organization. Setting the new role to the organization ' + orgId);
                 objToBeSent = {"role" : roleName};
                 axios.patch(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users/' + userId, objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
                     .then(function(res){
-                        context.logger.info('Role ' + roleName + ' successfully assigned to user: ' + username);
+                        context.logger.info('Role ' + roleName + ' in org: ' + orgId + ' successfully assigned to user: ' + username);
                     }) .catch(function(err){
                             context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while assigning role ' + roleName + ' to user: ' + username, err: err}, {}, 'application/json', 500));
                     })
@@ -197,3 +223,4 @@ exports.handler = async(context, event) => {
         }      
     });
 };
+
