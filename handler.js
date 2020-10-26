@@ -55,106 +55,128 @@ context.callback(new context.Response({message: 'Missing token'}, {}, 'applicati
  * Check if the organization exists in order to provision it and assign the proper rights to the user
  * if not, create the organization
  */
-var handleOrganizations = async (context, org, role, username, userId, defaultOrg) => {
-    var org_calls        = [];
-    var orgId            = "";
-    
-    org_calls.push( axios.get(GRAFANA_ENDPOINT + '/api/orgs/name/' + org, {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res) {
-            context.logger.info('Organization ' + org + ' already exists in Grafana.', res);
-            orgId = res.data.id;            
-            context.logger.info("organization Id: " + orgId);
-            
-            // assign the proper role to the user inside the organization
-            handleUserRoles(context, orgId, username, userId, role);
-            // assign the default org of the user
-            if(defaultOrg)
-                updateUser(context, userId, orgId);
-        }).catch(function(err) {
-            return axios.post(GRAFANA_ENDPOINT + '/api/orgs', {name: org}, {headers: {'Authorization': GRAFANA_AUTH}})
-                        .then(function(res) {
-                            context.logger.info('Organization does not exist in Grafana.Creating organization: ' + org);
-                            orgId = res.data.orgId;
-                            context.logger.info("organization Id: " + orgId);
-                            
-                            // assign the proper role to the user inside the organization
-                            handleUserRoles(context, orgId, username, userId, role);
-                            // assign the default org of the user
-                            if(defaultOrg)
-                                updateUser(context, userId, orgId);
-                            org_calls.push('Organization does not exist in Grafana.Creating organization: ' + org);
-                            return 'Organization does not exist in Grafana.Creating organization: ' + org;
-                        }).catch(function(err) {
-                            context.logger.info('Error while creating organization: ' + org + " " + err);
-                            context.callback(new context.Response({message: 'GRAFANA call failure: ' + 'Error while creating organization: ' + org + " ", err: err}, {}, 'application/json', 500));                            
-                        }); 
-        })
-    );
-    return org_calls;    
+async function handleOrganizations(context, org, role, username, userId, defaultOrg) {
+    var orgId = -1;
+    try{
+        orgId = await getOrganization(context, org);
+        if(orgId == -1){
+            orgId = await createOrganization(context, org);        
+        }         
+        context.logger.info("organization " + org + " Id: " + orgId);
+        // assign the proper role to the user inside the organization
+        await handleUserRoles(context, orgId, username, userId, role);
+        // assign the default org of the user
+        if(defaultOrg)
+            await updateUser(context, userId, orgId); 
+        return orgId; 
+    }catch(err){
+        return null;
+    }
 };
+
+
+async function getOrganization(context, org) {
+    var orgId = -1;
+    context.logger.info("Get organization " + org);
+    try{
+        var res = await axios.get(GRAFANA_ENDPOINT + '/api/orgs/name/' + org, {headers: {'Authorization': GRAFANA_AUTH}})
+        orgId = res.data.id;
+        return orgId;
+    } catch(err){
+        context.logger.infoWith('Error while getting organization: ' + org, err.message);
+        return orgId;
+    }
+}
+
+async function createOrganization(context, org) {
+    var orgId = -1;
+    context.logger.info("Creating organization " + org);
+    try{
+        var res = await axios.post(GRAFANA_ENDPOINT + '/api/orgs', {name: org}, {headers: {'Authorization': GRAFANA_AUTH}})
+        orgId = res.data.orgId;
+        return orgId;
+    } catch(err){
+        context.logger.infoWith('Error while creating organization: ' + org, err);
+        return orgId;
+    }
+}
+
 /**
  * Create the global user 
  */
-var provisionEntities = async (context, name, useremail, roles) => {
+async function provisionEntities(context, name, useremail, roles){
     var passw = randomStr.generate(8);
     var objToBeSent = {name : name, email : useremail, password : passw};
-    var userId = 0;
+    var userId = -1;
     var iter = 0;
     context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail);
-    userId = await axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res){
-            context.logger.info('Global user ' + name + ' ' + useremail + ' already exists in Grafana.', res);
-            userId = res.data.id;
-            // remove the user from old orgs
-            removeUserFromOrg(context, userId, roles);
-            // provisioning organizations
-            for (var org in roles) {
-                context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
-                roleName = roles[org];
-                handleOrganizations(context, org, roleName, useremail, userId, iter == Object.keys(roles).length-1);
-                iter++;
-            }         
-        }).catch(function(err){
-            axios.post(GRAFANA_ENDPOINT + '/api/admin/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
-                .then(function(res) {
-                    context.logger.info('User ' + name + ' successfully created in Grafana.');
-                    userId = res.data.id;
-                    // remove the user from old orgs
-                    removeUserFromOrg(context, userId, roles);
-                    // provisioning organizations
-                    for (var org in roles) {
-                        context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
-                        roleName = roles[org];
-                        handleOrganizations(context, org, roleName, useremail, userId, iter == Object.keys(roles).length-1);
-                        iter++;
-                    } 
-                    return res.data.id;
-                }).catch(function(err) {
-                        context.logger.info('Error while creating user: ' + name + err);
-                        context.callback(new context.Response({message: 'GRAFANA call failure: ' + 'Error while creating user: ' + name, err: err}, {}, 'application/json', 500));                            
-                });
-        });
+    userId = await getUser(context, useremail);
+    context.logger.info(userId);
+    // create user
+    if(userId == -1){
+        userId = await createUser(context, name, useremail);
+    }    
+    // remove the user from old orgs
+    await removeUserFromOrg(context, userId, roles);
+    // provisioning organizations
+    for (var org in roles) {
+        context.logger.info('Inside loop of orgs : ' + org + " " + roles[org]);
+        roleName = roles[org];
+        await handleOrganizations(context, org, roleName, useremail, userId, iter == Object.keys(roles).length-1);
+        iter++;
+    } 
 };
 
 /**
  * Update user to switch its context to the given organization
  */
-var updateUser = async (context, userId, orgId) => {
+async function updateUser (context, userId, orgId) {
     context.logger.info("Updating the default org of user " + userId + ". OrgId: " + orgId + " " + GRAFANA_ENDPOINT + '/api/users/' + userId + '/using/' + orgId);
-    axios.post(GRAFANA_ENDPOINT + '/api/users/' + userId + '/using/' + orgId, {}, {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res){
-            context.logger.info('User ' + userId + ' context switched successfully to orgId: ' + orgId);
-            return res.data
-        }).catch(function(err){
-            context.logger.info('Error while updating user: ' + userId + " " + err);
-                context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while updating user.', err: err}, {}, 'application/json', 500));
-        })
+    try{
+        var res = await axios.post(GRAFANA_ENDPOINT + '/api/users/' + userId + '/using/' + orgId, {}, {headers: {'Authorization': GRAFANA_AUTH}})
+        context.logger.info('User ' + userId + ' context switched successfully to orgId: ' + orgId);
+        return res.data
+    } catch(err){
+        context.logger.infoWith('Error while updating user: ' + userId, err);
+    }
+}
+
+/**
+ * Get user configuration
+ */
+async function getUser (context, useremail) {
+    var userId = -1;
+    context.logger.info("Get user " + useremail + " " + GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail);
+    try{
+        var res = await axios.get(GRAFANA_ENDPOINT + '/api/users/lookup?loginOrEmail=' + useremail, {headers: {'Authorization': GRAFANA_AUTH}})
+        return res.data.id;
+    } catch(err){
+        context.logger.info('Error getting user ' + useremail + " " + err.response.data.message);
+        return userId;
+    }
+}
+
+/**
+ * Create user
+ */
+async function createUser (context, name, useremail) {
+    var userId = -1;
+    var passw = randomStr.generate(8);
+    var objToBeSent = {name : name, email : useremail, password : passw};
+    context.logger.info("Creating user " + name + " " + useremail );
+    try{
+        var res = await axios.post(GRAFANA_ENDPOINT + '/api/admin/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
+        return res.data.id
+    } catch(err){
+        context.logger.infoWith('Error while creating user: ' + name, err.response.data.message);
+        return userId;
+    }
 }
 
 /**
  * Get the list of organizations in Grafana
  */
-var getListOrgsOfUser = async (context, userId) => {
+async function getListOrgsOfUser (context, userId) {
     return axios.get(GRAFANA_ENDPOINT + '/api/users/' + userId + '/orgs', {headers: {'Authorization': GRAFANA_AUTH}})
         .then(function(res){
             context.logger.info("List of user's organizations: ")
@@ -166,45 +188,56 @@ var getListOrgsOfUser = async (context, userId) => {
 /**
  * Remove the user from the non-belonging organizations 
  */
-var removeUserFromOrg = async (context, userId, roles) => {
+async function removeUserFromOrg (context, userId, roles) {
     orgs = await getListOrgsOfUser(context, userId);
     console.log(Object.keys(roles))
     excludedOrgs = orgs.filter(value => !Object.keys(roles).includes(value.name))
     context.logger.info("List of organizations to delete the user from: ")
     console.log(excludedOrgs)
-    for(var currOrg in excludedOrgs){
-        axios.delete(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId, {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res){
-            context.logger.info('User ' + userId + ' removed successfully from org: ' + currOrg);
-            return res.data
-        }).catch(function(err){
-                context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while removing user from Org.' + currOrg.name , err: err}, {}, 'application/json', 500));
-        })
-    }   
+    try{
+        for(var currOrg in excludedOrgs){
+            context.logger.info(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId)
+            await axios.delete(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId, {headers: {'Authorization': GRAFANA_AUTH}})
+        }   
+    } catch(err){
+        context.logger.infoWith('Error while removing user from Org.', err);
+    }
 }
 
 /**
  *  Assign the user to the proper role (Admin, Editor, Viewer)
  */
-var handleUserRoles = async (context, orgId, username, userId, roleName) => {
-    var objToBeSent = {loginOrEmail : username, "role" : roleName};
-    context.logger.infoWith("Handling Roles of user:" + username + " in organizationId. " + orgId + ". objToBeSent " , objToBeSent);
-    axios.post(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res) {
-            context.logger.info('Role ' + roleName + ' in org: ' + orgId + ' successfully assigned to user: ' + username);
-        }).catch(function(err) {
-                context.logger.info('User is already member of this organization. Setting the new role to the organization ' + orgId);
-                objToBeSent = {"role" : roleName};
-                axios.patch(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users/' + userId, objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
-                    .then(function(res){
-                        context.logger.info('Role ' + roleName + ' in org: ' + orgId + ' successfully assigned to user: ' + username);
-                    }) .catch(function(err){
-                            context.callback(new context.Response({message: 'GRAFANA call failure: ' +  'Error while assigning role ' + roleName + ' to user: ' + username, err: err}, {}, 'application/json', 500));
-                    })
-            });
+async function handleUserRoles (context, orgId, username, userId, roleName) {
+    context.logger.infoWith("Handling Roles of user:" + username + " " + userId + " in organizationId. " + orgId);
+    try{
+        var res = await addUserRole(context, orgId, username, userId, roleName);
+        if(res == -1){
+            context.logger.info('User is already member of this organization. Setting the new role to the organization ' + orgId);
+            objToBeSent = {"role" : roleName};
+            res = await axios.patch(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users/' + userId, objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
+            return res;
+        }
+    }catch(err){
+        context.logger.info('Error during updating role of user: ' + err.response.data.message);
+        return null;
+    }
 };
-exports.handler = async(context, event) => {
-    extractClaims(context, event.headers, function(claims) {
+
+async function addUserRole (context, orgId, username, userId, roleName) {
+    var objToBeSent = {loginOrEmail : username, "role" : roleName};
+    context.logger.infoWith("Adding Roles of user:" + username + " " + userId + " in organizationId. " + orgId + ". objToBeSent " , objToBeSent);
+    var res = -1;
+    try{
+        var res = await axios.post(GRAFANA_ENDPOINT + '/api/orgs/' + orgId + '/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
+        context.logger.info('Role ' + roleName + ' in org: ' + orgId + ' successfully assigned to user: ' + username);
+        return res;
+    }catch(err){
+        return res;
+    }
+};
+
+exports.handler = function(context, event) {
+    extractClaims(context, event.headers, async function(claims) {
         try{
             // extract roles
             context.logger.infoWith('Roles from AAC for Grafana: ', claims[CUSTOMCLAIM_ROLES]);
@@ -213,7 +246,7 @@ exports.handler = async(context, event) => {
             var roles = claims[CUSTOMCLAIM_ROLES];       
             if(roles != undefined){
                 // create the global user, the organizations and assing the proper roles to the user
-                provisionEntities(context, name, username, roles);
+                await provisionEntities(context, name, username, roles);
                 context.callback(roles);
             } else{
                 context.callback(new context.Response({message: 'Missing roles from AAC. Check the claim mapping'}, {}, 'application/json', 500));
