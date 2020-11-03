@@ -1,56 +1,82 @@
-
 var jwt = require('jsonwebtoken');
 var axios = require('axios');
 var randomStr = require('randomstring');
+var jwksClient = require('jwks-rsa-promisified');
 
 var JWKS_URI                    = process.env.AACJWKURL;
 var RESOURCE_ID                 = process.env.AACRESOURCEID;
 var GRAFANA_ENDPOINT            = process.env.GRAFANAENDPOINT;
 var GRAFANA_AUTH                = process.env.GRAFANAAUTH;
-var CUSTOMCLAIM_ROLES = 'grafana/roles'
+var CUSTOMCLAIM_ROLES           = 'grafana/roles'
 
 /**
 * Check JWT token is present, is valid with respect to the preconfigured JWKS, and is not expired.
 * If the check is passed, then return extracted claims.
 */
-var extractClaims = async(context, headers, callback) => {
-for (var h in headers) {
-    if (h.toLowerCase() === 'authorization' && headers[h]) {
-        // Expect header in the form Bearer <JWT>
-        var token = headers[h].substring(headers[h].indexOf(' ')+1);
-        var jwksClient = require('jwks-rsa');
+
+async function retrieveKey(kid) {
+    try{
+        console.log("Retrieving Key...")
         var client = jwksClient({
-            jwksUri: JWKS_URI
+                jwksUri: JWKS_URI
         });
-        function getKey(header, keyCallback){
-            if (context.key) {
-                keyCallback(null, context.key);
-                return;
-            }
-            client.getSigningKey(header.kid, function(err, key) {
-                var signingKey = key ? key.publicKey || key.rsaPublicKey : null;
-                context.logger.info('New key ' + signingKey);
-                if(signingKey === null)
-                    context.callback(new context.Response({message: 'Missing signing key'}, {}, 'application/json', 401));
-                context.key = signingKey;
-                keyCallback(null, signingKey);
-            });
-        }
-  
-        var options = { audience: RESOURCE_ID };
-         jwt.verify(token, getKey, options, function(err, decoded) {
-            context.logger.infoWith('Verify jwt: claims: ', decoded);
-            if (!decoded) {	
-                context.callback(new context.Response({message: 'Incorrect signature: ' , err: err}, {}, 'application/json', 401));
-            }
-            callback(decoded);
-        }); 
-        return; 
+        const key = await client.getSigningKeyAsync(kid);
+        return key.publicKey || key.rsaPublicKey;
+    }catch(err){
+        console.log(err.message);
+        return err
     }
 }
-context.callback(new context.Response({message: 'Missing token'}, {}, 'application/json', 400));
+
+function getKid(token) {
+    try{
+        console.log("Getting Kid...");
+        var decoded = jwt.decode(token, {complete: true}); 
+        console.log(decoded.header);
+        return decoded.header.kid;
+    }catch(err){
+        console.log("Error getting kid: " + err.message);
+        return err;
+    }
+}
+
+async function extractClaims(context, headers){
+    try{
+        var authorization = Object.keys(headers).includes("Authorization") ? headers["Authorization"] : headers["authorization"];
+        if(authorization){
+            // Expect header in the form Bearer <JWT>
+            var token = authorization.substring(authorization.indexOf(' ')+1);
+            var kid = getKid(token);
+            var key = await retrieveKey(kid);
+            var dec = await jwt.verify(token, key); 
+            return dec;
+        } else{
+            return null;
+        }        
+    }catch(err){
+        console.log(err.message)
+        return null;
+    }
 } 
 
+async function preProvision(context, claims){
+    try{
+        // extract roles
+        context.logger.infoWith('Roles from AAC for Grafana: ', claims[CUSTOMCLAIM_ROLES]);
+        var name  = claims.username;
+        var username = claims.email;  
+        var roles = claims[CUSTOMCLAIM_ROLES];       
+        if(roles != undefined && Object.keys(roles).length != 0){
+            // create the global user, the organizations and assing the proper roles to the user
+            await provisionEntities(context, name, username, roles);
+            return roles;
+        } else{
+            return null;
+        }
+    }catch(err){
+        return err;
+    }
+}
 /**
  * Check if the organization exists in order to provision it and assign the proper rights to the user
  * if not, create the organization
@@ -111,7 +137,6 @@ async function provisionEntities(context, name, useremail, roles){
     var iter = 0;
     context.logger.infoWith("Handling User creation:" + name + " with username: " + useremail);
     userId = await getUser(context, useremail);
-    context.logger.info(userId);
     // create user
     if(userId == -1){
         userId = await createUser(context, name, useremail);
@@ -168,7 +193,7 @@ async function createUser (context, name, useremail) {
         var res = await axios.post(GRAFANA_ENDPOINT + '/api/admin/users', objToBeSent, {headers: {'Authorization': GRAFANA_AUTH}})
         return res.data.id
     } catch(err){
-        context.logger.infoWith('Error while creating user: ' + name, err.response.data.message);
+        context.logger.infoWith('Error while creating user: ' + name + " " + err.response.data.message);
         return userId;
     }
 }
@@ -177,12 +202,17 @@ async function createUser (context, name, useremail) {
  * Get the list of organizations in Grafana
  */
 async function getListOrgsOfUser (context, userId) {
-    return axios.get(GRAFANA_ENDPOINT + '/api/users/' + userId + '/orgs', {headers: {'Authorization': GRAFANA_AUTH}})
-        .then(function(res){
-            context.logger.info("List of user's organizations: ")
-            console.log(res.data)
-            return res.data
-        })
+    var orgs = [];
+    try{
+        var res = await axios.get(GRAFANA_ENDPOINT + '/api/users/' + userId + '/orgs', {headers: {'Authorization': GRAFANA_AUTH}});
+        console.log("List of user's organizations: ")
+        console.log(res.data)
+        return res.data
+
+    }catch(err){
+        context.logger.info('Error during updating role of user: ' + err.response.data.message);
+        return orgs;
+    }
 }
 
 /**
@@ -192,15 +222,15 @@ async function removeUserFromOrg (context, userId, roles) {
     orgs = await getListOrgsOfUser(context, userId);
     console.log(Object.keys(roles))
     excludedOrgs = orgs.filter(value => !Object.keys(roles).includes(value.name))
-    context.logger.info("List of organizations to delete the user from: ")
+    console.log("List of organizations to delete the user from: ")
     console.log(excludedOrgs)
     try{
         for(var currOrg in excludedOrgs){
-            context.logger.info(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId)
             await axios.delete(GRAFANA_ENDPOINT + '/api/orgs/' + excludedOrgs[currOrg]["orgId"] + '/users/' + userId, {headers: {'Authorization': GRAFANA_AUTH}})
+                .catch(err => {context.logger.info('Error while removing user from Org. ' + excludedOrgs[currOrg]["orgId"] + " " + err.response.data.message);})
         }   
     } catch(err){
-        context.logger.infoWith('Error while removing user from Org.', err);
+        context.logger.info('Error while removing user from Org.' + err.response.data.message);
     }
 }
 
@@ -236,24 +266,32 @@ async function addUserRole (context, orgId, username, userId, roleName) {
     }
 };
 
-exports.handler = function(context, event) {
-    extractClaims(context, event.headers, async function(claims) {
-        try{
-            // extract roles
-            context.logger.infoWith('Roles from AAC for Grafana: ', claims[CUSTOMCLAIM_ROLES]);
-            var name  = claims.username;
-            var username = claims.email;  
-            var roles = claims[CUSTOMCLAIM_ROLES];       
-            if(roles != undefined){
-                // create the global user, the organizations and assing the proper roles to the user
-                await provisionEntities(context, name, username, roles);
-                context.callback(roles);
-            } else{
-                context.callback(new context.Response({message: 'Missing roles from AAC. Check the claim mapping'}, {}, 'application/json', 500));
-            } 
-        } catch(err){
-            context.callback(new context.Response({message: 'GRAFANA call failure', err: err}, {}, 'application/json', 500));
-        }      
-    });
-};
+async function processEvent(context, event) {
+    try{
+        console.log("Inside processEvent...");
+        var claims = await extractClaims(context, event.headers);
+        if(claims != null){
+            var roles = await preProvision(context, claims);
+            if (roles !== null) {
+                return roles;
+            } else {
+                return new context.Response({message: 'Missing roles from AAC. Check the claim mapping'}, {}, 'application/json', 500);
+            }
+        }else{
+            return new context.Response({message: 'Invalid token provided'}, {}, 'application/json', 401);
+        }
+    } catch (err) {
+        return err;
+    }
+}
 
+
+exports.handler = function(context, event) {
+    processEvent(context, event)
+        .then(response => {
+                context.callback(response)
+        })
+        .catch(err => {
+            context.callback(new context.Response({message: 'GRAFANA call failure',err: err}, {}, 'application/json', 500));
+        });
+};
