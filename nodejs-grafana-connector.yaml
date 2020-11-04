@@ -13,6 +13,8 @@ spec:
       value: "Basic YWRtaW46YWxiYW5h"
     - name: GRAFANAENDPOINT
       value: "http://GRAFANA_URL:3000"
+    - name: AACISSUER
+      value: "http://AAC_URL:8080/aac"
   resources: {}
   image: "nuclio/processor-nodejs-grafana:latest"
   minReplicas: 1

@@ -5,6 +5,7 @@ var jwksClient = require('jwks-rsa-promisified');
 
 var JWKS_URI                    = process.env.AACJWKURL;
 var RESOURCE_ID                 = process.env.AACRESOURCEID;
+var ISSUER                      = process.env.AACISSUER
 var GRAFANA_ENDPOINT            = process.env.GRAFANAENDPOINT;
 var GRAFANA_AUTH                = process.env.GRAFANAAUTH;
 var CUSTOMCLAIM_ROLES           = 'grafana/roles'
@@ -48,7 +49,8 @@ async function extractClaims(context, headers){
             var token = authorization.substring(authorization.indexOf(' ')+1);
             var kid = getKid(token);
             var key = await retrieveKey(kid);
-            var dec = await jwt.verify(token, key); 
+            var options = { audience: RESOURCE_ID, issuer: ISSUER};
+            var dec = await jwt.verify(token, key, options); 
             return dec;
         } else{
             return null;
@@ -66,7 +68,7 @@ async function preProvision(context, claims){
         var name  = claims.username;
         var username = claims.email;  
         var roles = claims[CUSTOMCLAIM_ROLES];       
-        if(roles != undefined && Object.keys(roles).length != 0){
+        if(roles != undefined){
             // create the global user, the organizations and assing the proper roles to the user
             await provisionEntities(context, name, username, roles);
             return roles;
@@ -270,21 +272,14 @@ async function processEvent(context, event) {
     try{
         console.log("Inside processEvent...");
         var claims = await extractClaims(context, event.headers);
-        if(claims != null){
-            var roles = await preProvision(context, claims);
-            if (roles !== null) {
-                return roles;
-            } else {
-                return new context.Response({message: 'Missing roles from AAC. Check the claim mapping'}, {}, 'application/json', 500);
-            }
-        }else{
-            return new context.Response({message: 'Invalid token provided'}, {}, 'application/json', 401);
-        }
+        if (claims == null)
+        	throw Error("Invalid claims or token provided");
+        await preProvision(context, claims);
+        return new context.Response({message: 'Roles updated'}, {}, 'application/json', 200);
     } catch (err) {
-        return err;
+        return Promise.reject(err);
     }
 }
-
 
 exports.handler = function(context, event) {
     processEvent(context, event)
@@ -292,6 +287,6 @@ exports.handler = function(context, event) {
                 context.callback(response)
         })
         .catch(err => {
-            context.callback(new context.Response({message: 'GRAFANA call failure',err: err}, {}, 'application/json', 500));
+            context.callback(new context.Response({message: 'GRAFANA call failure',err: err.message}, {}, 'application/json', 500));
         });
 };
