@@ -5,16 +5,20 @@ spec:
   handler: "main:handler"
   runtime: nodejs
   env:
-    - name: AACJWKURL
+    - name: AAC_ISSUER
+      value: "http://AAC_URL:8080/aac"  
+    - name: AAC_JWKURL
       value: "http://AAC_URL:8080/aac/jwk"
-    - name: AACRESOURCEID
-      value: AAC_RESOURCE_ID_VALUE
-    - name: GRAFANAAUTH
-      value: "Basic YWRtaW46YWxiYW5h"
-    - name: GRAFANAENDPOINT
-      value: "http://GRAFANA_URL:3000"
-    - name: AACISSUER
-      value: "http://AAC_URL:8080/aac"
+    - name: AAC_CLIENT_ID
+      value: clientId
+    - name: AAC_CLIENT_SECRET
+      value: clientId      
+    - name: GRAFANA_ENDPOINT
+      value: "http://GRAFANA_URL:3000"      
+    - name: GRAFANA_AUTH_USERNAME
+      value: USERNAME
+    - name: GRAFANA_AUTH_PASSWORD
+      value: PASSWORD      
   resources: {}
   image: "nuclio/processor-nodejs-grafana:latest"
   minReplicas: 1
