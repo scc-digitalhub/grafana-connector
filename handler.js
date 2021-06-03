@@ -287,19 +287,23 @@ async function addUserRole(orgId, username, userId, roleName, logger) {
 
 async function processEvent(event, logger) {
     logger.info("Inside processEvent...");
+
     var auth = extractAuth(event.headers)
     if (auth != AUTH) {
         throw Error("Invalid authentication");
     }
+
     var body = event.body.toString();
     var claims = await extractClaims(body, logger);
     if (claims == null) {
         throw Error("Invalid claims or token provided");
     }
+
     var roles = await preProvision(claims, logger);
     if (roles == null) {
         throw Error("Invalid roles in claims");
     }
+
     return roles;
 }
 
