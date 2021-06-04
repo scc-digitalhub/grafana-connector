@@ -288,7 +288,7 @@ async function addUserRole(orgId, username, userId, roleName, logger) {
 async function processEvent(event, logger) {
     logger.info("Inside processEvent...");
 
-    var auth = extractAuth(event.headers)
+    var auth = 'Basic ' + extractAuth(event.headers)
     if (auth != AUTH) {
         throw Error("Invalid authentication");
     }
